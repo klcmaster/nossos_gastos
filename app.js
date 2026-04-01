@@ -1,7 +1,94 @@
 // --- Estado do App ---
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwbU4uNR30PInGX5U0jbLmoRV6urLBReJxpeSWaBct6iihYkJSBLdsVGh9tNKYplBcn_g/exec";
+
 let entries = JSON.parse(localStorage.getItem('fpro_entries')) || [];
 let persons = JSON.parse(localStorage.getItem('fpro_persons')) || ['Mim'];
 let currentView = 'add-transaction';
+
+// --- Sincronização Inicial (Busca dados da Planilha) ---
+async function syncFromCloud() {
+    try {
+        const response = await fetch(WEB_APP_URL, {
+            method: "GET",
+            redirect: "follow"
+        });
+        
+        if (!response.ok) throw new Error("Erro na resposta da rede");
+        
+        const cloudData = await response.json();
+        console.log("Dados recebidos da nuvem:", cloudData);
+        
+        // CORREÇÃO: Lógica para processar e salvar os dados recebidos
+        if (Array.isArray(cloudData) && cloudData.length > 0) {
+            // Convertemos os valores para garantir que números sejam números e não strings
+            entries = cloudData.map(e => ({
+                id: parseInt(e.id),
+                date: e.data.substring(0, 10), // Garante que seja apenas a data no formato YYYY-MM-DD
+                title: e.titulo || e.title, // Mapeia caso o nome na planilha esteja em PT
+                amount: parseFloat(e.valor || e.amount),
+                person: e.pessoa || e.person,
+                type: e.tipo || e.type,
+                description: e.descricao || e.description || ""
+            })).reverse(); // Inverte para que o mais recente apareça primeiro no topo
+
+            saveEntries();
+            render(); // Atualiza a tela com os dados da nuvem
+            console.log("Dados sincronizados com a nuvem!");
+        }
+    } catch (err) {
+        console.error("Erro ao sincronizar:", err);
+    }
+}
+
+// --- Salvar Dados ---
+async function saveEntryToCloud(entry) {
+    showToast("Enviando para nuvem...");
+    try {
+        await fetch(WEB_APP_URL, {
+            method: "POST",
+            redirect: "follow", // Importante para o Google Apps Script
+            body: JSON.stringify(entry),
+            headers: { "Content-Type": "text/plain;charset=utf-8" }
+        });
+        showToast("Sincronizado com sucesso!");
+    } catch (err) {
+        showToast("Erro ao salvar online. Salvo apenas local.");
+    }
+}
+
+function saveLocal() {
+    localStorage.setItem('fpro_entries', JSON.stringify(entries));
+    localStorage.setItem('fpro_persons', JSON.stringify(persons));
+}
+
+// --- Atualização do Submit do Formulário ---
+document.getElementById('expense-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const val = parseFloat(document.getElementById('amount').value);
+    const type = document.getElementById('type').value;
+
+    const newEntry = {
+        id: Date.now(),
+        date: document.getElementById('date').value,
+        amount: type === 'debit' ? -Math.abs(val) : Math.abs(val),
+        title: document.getElementById('title').value,
+        person: document.getElementById('person-select').value,
+        description: document.getElementById('description').value,
+        type: type
+    };
+
+    // 1. Atualiza UI e Local imediatamente
+    entries.unshift(newEntry);
+    saveLocal();
+    e.target.reset();
+    document.getElementById('date').valueAsDate = new Date();
+    navigateTo('history');
+
+    // 2. Envia para o Google em segundo plano
+    await saveEntryToCloud(newEntry);
+});
+
+/////////////////////////////////
 
 // --- Navegação ---
 function navigateTo(viewId) {
@@ -84,7 +171,7 @@ function renderPersonsList() {
     `).join('');
 }
 
-// --- Registros ---
+/*/ --- Registros ---
 document.getElementById('expense-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const valInput = document.getElementById('amount').value;
@@ -112,7 +199,7 @@ document.getElementById('expense-form').addEventListener('submit', (e) => {
     document.getElementById('date').valueAsDate = new Date();
     showToast("Lançamento salvo!");
     navigateTo('history');
-});
+});*/
 
 function deleteEntry(id) {
     if(confirm("Deseja excluir este registro permanentemente?")) {
@@ -143,6 +230,7 @@ function renderHistory() {
     if(!list) return;
     const filterDate = document.getElementById('filter-date').value;
     const filtered = filterDate ? entries.filter(e => e.date === filterDate) : entries;
+    //console.log(filtered);
 
     if (filtered.length === 0) {
         list.innerHTML = '<div class="text-center py-20 text-slate-500">Nenhum registro encontrado.</div>';
@@ -155,7 +243,9 @@ function renderHistory() {
             <div class="bg-[#1e293b] p-5 rounded-2xl border border-slate-800 flex justify-between items-center group transition-all hover:border-slate-600 shadow-lg">
                 <div class="space-y-1 overflow-hidden pr-2">
                     <div class="flex items-center gap-2">
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400 uppercase tracking-tighter">${e.date.split('-').reverse().join('/')}</span>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400 uppercase tracking-tighter">
+                            ${e.date ? e.date.split('-').reverse().join('/') : '??/??/??'}
+                        </span>
                         <h3 class="font-semibold text-slate-100 truncate">${e.title}</h3>
                     </div>
                     <p class="text-xs text-slate-400 flex items-center gap-1">
@@ -221,7 +311,7 @@ window.onload = () => {
     document.getElementById('date').valueAsDate = new Date();
     updatePersonSelect();
     navigateTo('add-transaction');
-    document.getElementById('filter-date').addEventListener('change', renderHistory);
+    syncFromCloud(); // Busca dados online ao abrir
 };
 
 if ('serviceWorker' in navigator) {

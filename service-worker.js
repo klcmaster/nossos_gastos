@@ -1,12 +1,12 @@
 const CACHE_NAME = 'financeiro-pro-v1';
 const ASSETS = [
   '/',
-  '/index.html',
+  /*'/index.html',
   '/styles.css',
   '/app.js',
   '/manifest.json',
   '/icons/icon-192.png',
-  '/icons/icon-512.png'
+  '/icons/icon-512.png'*/
 ];
 
 self.addEventListener('install', event => {
