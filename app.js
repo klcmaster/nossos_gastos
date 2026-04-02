@@ -1,58 +1,99 @@
 // --- Estado do App ---
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwbU4uNR30PInGX5U0jbLmoRV6urLBReJxpeSWaBct6iihYkJSBLdsVGh9tNKYplBcn_g/exec";
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx_OtvCYO4G8liI38Ej1-xZOVo1Qwhg0Cthx9MJBMvjuwKI3JR79U8rwohOBp0_6r1-/exec";
 
-let entries = JSON.parse(localStorage.getItem('fpro_entries')) || [];
-let persons = JSON.parse(localStorage.getItem('fpro_persons')) || ['Mim'];
+let entries = [];//JSON.parse(localStorage.getItem('fpro_entries')) || [];
+let persons = [];//JSON.parse(localStorage.getItem('fpro_persons')) || ['Mim'];
 let currentView = 'add-transaction';
 
-// --- Sincronização Inicial (Busca dados da Planilha) ---
+/*/ --- Buscar Dados (Read) ---
 async function syncFromCloud() {
+    showToast("Sincronizando...");
     try {
-        const response = await fetch(WEB_APP_URL, {
-            method: "GET",
-            redirect: "follow"
-        });
-        
-        if (!response.ok) throw new Error("Erro na resposta da rede");
-        
+        const response = await fetch(WEB_APP_URL, { method: "GET", redirect: "follow" });
         const cloudData = await response.json();
-        console.log("Dados recebidos da nuvem:", cloudData);
         
-        // CORREÇÃO: Lógica para processar e salvar os dados recebidos
-        if (Array.isArray(cloudData) && cloudData.length > 0) {
-            // Convertemos os valores para garantir que números sejam números e não strings
+        if (Array.isArray(cloudData)) {
             entries = cloudData.map(e => ({
-                id: parseInt(e.id),
-                date: e.data.substring(0, 10), // Garante que seja apenas a data no formato YYYY-MM-DD
-                title: e.titulo || e.title, // Mapeia caso o nome na planilha esteja em PT
+                id: e.id,
+                date: typeof e.data === 'string' ? e.data.substring(0, 10) : e.data,
+                title: e.titulo || e.title,
                 amount: parseFloat(e.valor || e.amount),
                 person: e.pessoa || e.person,
                 type: e.tipo || e.type,
                 description: e.descricao || e.description || ""
-            })).reverse(); // Inverte para que o mais recente apareça primeiro no topo
-
-            saveEntries();
-            render(); // Atualiza a tela com os dados da nuvem
-            console.log("Dados sincronizados com a nuvem!");
+            })).reverse();
+            render();
         }
     } catch (err) {
-        console.error("Erro ao sincronizar:", err);
+        showToast("Erro ao carregar dados online.");
+    }
+}*/
+async function syncFromCloud() {
+    showToast("Sincronizando...");
+    try {
+        const response = await fetch(WEB_APP_URL, { method: "GET", redirect: "follow" });
+        const data = await response.json();
+        
+        // Sincroniza Pessoas
+        if (data.persons) {
+            persons = data.persons;
+            updatePersonSelect();
+            if (currentView === 'persons') renderPersonsList();
+        }
+
+        // Sincroniza Entradas (Gastos)
+        if (data.entries) {
+            entries = data.entries.map(e => ({
+                id: e.id,
+                date: typeof e.data === 'string' ? e.data.substring(0, 10) : e.data,
+                title: e.titulo || e.title,
+                amount: parseFloat(e.valor || e.amount),
+                person: e.pessoa || e.person,
+                type: e.tipo || e.type,
+                description: e.descricao || e.description || ""
+            })).reverse();
+            render();
+        }
+    } catch (err) {
+        showToast("Erro na sincronização online.");
     }
 }
+// --- Excluir Dados (Delete) ---
+async function deleteEntry(id) {
+    if(!confirm("Deseja excluir este registro da planilha permanentemente?")) return;
 
-// --- Salvar Dados ---
-async function saveEntryToCloud(entry) {
-    showToast("Enviando para nuvem...");
+    showToast("Excluindo da nuvem...");
     try {
         await fetch(WEB_APP_URL, {
             method: "POST",
-            redirect: "follow", // Importante para o Google Apps Script
+            redirect: "follow",
+            body: JSON.stringify({ action: "DELETE", id: id }),
+            headers: { "Content-Type": "text/plain;charset=utf-8" }
+        });
+        
+        // Remove localmente após confirmação da nuvem
+        entries = entries.filter(e => e.id !== id);
+        renderHistory();
+        showToast("Excluído com sucesso!");
+    } catch (err) {
+        showToast("Erro ao excluir registro online.");
+    }
+}
+
+// --- Salvar Dados (Create) ---
+async function saveEntryToCloud(entry) {
+    showToast("Enviando...");
+    try {
+        await fetch(WEB_APP_URL, {
+            method: "POST",
+            redirect: "follow",
             body: JSON.stringify(entry),
             headers: { "Content-Type": "text/plain;charset=utf-8" }
         });
-        showToast("Sincronizado com sucesso!");
+        showToast("Salvo na planilha!");
+        syncFromCloud(); // Recarrega para garantir sincronia
     } catch (err) {
-        showToast("Erro ao salvar online. Salvo apenas local.");
+        showToast("Erro ao salvar online.");
     }
 }
 
@@ -77,15 +118,10 @@ document.getElementById('expense-form').addEventListener('submit', async (e) => 
         type: type
     };
 
-    // 1. Atualiza UI e Local imediatamente
-    entries.unshift(newEntry);
-    saveLocal();
+    await saveEntryToCloud(newEntry);
     e.target.reset();
     document.getElementById('date').valueAsDate = new Date();
     navigateTo('history');
-
-    // 2. Envia para o Google em segundo plano
-    await saveEntryToCloud(newEntry);
 });
 
 /////////////////////////////////
@@ -117,7 +153,7 @@ function toggleSidebar(force) {
     }
 }
 
-// --- Gerenciamento de Pessoas ---
+/*/ --- Gerenciamento de Pessoas ---
 function addPerson() {
     const input = document.getElementById('person-input');
     const name = input.value.trim();
@@ -135,6 +171,7 @@ function addPerson() {
     }
 }
 
+
 function removePerson(name) {
     if (persons.length <= 1) {
         alert("Você precisa de pelo menos uma pessoa cadastrada.");
@@ -147,6 +184,36 @@ function removePerson(name) {
         renderPersonsList();
         showToast(`Pessoa "${name}" removida!`);
     }
+}*/
+
+async function addPerson() {
+    const input = document.getElementById('person-input');
+    const name = input.value.trim();
+    if (name && !persons.includes(name)) {
+        showToast("Salvando pessoa...");
+        try {
+            await fetch(WEB_APP_URL, {
+                method: "POST",
+                redirect: "follow",
+                body: JSON.stringify({ action: "ADD_PERSON", name: name })
+            });
+            input.value = '';
+            await syncFromCloud();
+        } catch (e) { showToast("Erro ao salvar pessoa."); }
+    }
+}
+
+async function removePerson(name) {
+    if (persons.length <= 1 || !confirm(`Remover "${name}" da nuvem?`)) return;
+    showToast("Removendo...");
+    try {
+        await fetch(WEB_APP_URL, {
+            method: "POST",
+            redirect: "follow",
+            body: JSON.stringify({ action: "DELETE_PERSON", name: name })
+        });
+        await syncFromCloud();
+    } catch (e) { showToast("Erro ao remover."); }
 }
 
 function updatePersonSelect() {
@@ -169,44 +236,6 @@ function renderPersonsList() {
             </button>
         </div>
     `).join('');
-}
-
-/*/ --- Registros ---
-document.getElementById('expense-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const valInput = document.getElementById('amount').value;
-    const val = parseFloat(valInput);
-    const type = document.getElementById('type').value;
-
-    if (isNaN(val) || val <= 0) {
-        alert("Por favor, insira um valor válido.");
-        return;
-    }
-
-    const newEntry = {
-        id: Date.now(),
-        date: document.getElementById('date').value,
-        amount: type === 'debit' ? -Math.abs(val) : Math.abs(val),
-        title: document.getElementById('title').value,
-        person: document.getElementById('person-select').value,
-        description: document.getElementById('description').value,
-        type: type
-    };
-
-    entries.unshift(newEntry);
-    saveEntries();
-    e.target.reset();
-    document.getElementById('date').valueAsDate = new Date();
-    showToast("Lançamento salvo!");
-    navigateTo('history');
-});*/
-
-function deleteEntry(id) {
-    if(confirm("Deseja excluir este registro permanentemente?")) {
-        entries = entries.filter(e => e.id !== id);
-        saveEntries();
-        renderHistory();
-    }
 }
 
 function clearFilter() {
